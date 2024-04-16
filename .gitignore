@@ -1,0 +1,5 @@
+__pycache__/
+media_files/
+captures/
+.ipynb_checkpoints/
+*ipynb
