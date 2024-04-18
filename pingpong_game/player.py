@@ -1,5 +1,7 @@
 class Player:
     def __init__(self, name=None, position=None):
+        if name is None:
+            name = "no name"
         self.name = name
         self.position = position
 

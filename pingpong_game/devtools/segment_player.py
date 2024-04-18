@@ -18,12 +18,12 @@ from pingpong_game.signal.signal_capture import preprocess_signal
 from pingpong_game.signal.signal_tools import load_signal, estimate_delay_cross_corr
 
 
-media_dir = "media_files"
+media_dir = "pingpong_game/devtools/media_files"
 media_fname = "pp_003"
 
 video_fname = f"{media_dir}/{media_fname}.mp4"
 audio_fname = f"{media_dir}/{media_fname}.wav"
-cap_fname = f"captures/{media_fname}_caps_001.json"
+cap_fname = f"pingpong_game/devtools/captures/{media_fname}_caps_001.json"
 
 [sig, Fs] = load_signal(audio_fname, split_channels=False)
 audio_segments = preprocess_signal(audio_fname, 100)

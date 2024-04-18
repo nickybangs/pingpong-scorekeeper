@@ -2,7 +2,7 @@ import logging
 import numpy as np
 from scipy import signal
 
-from signal_tools import load_signal, get_rms
+from pingpong_game.signal.signal_tools import load_signal, get_rms
 
 log = logging.getLogger()
 

@@ -4,6 +4,9 @@ class Event:
         self.player = player
         self.etype = etype
 
+    def __str__(self):
+        return "Event("+str(self.player)+", "+self.etype+")"
+
 class GameEventState:
     def __init__(self, event):
         self.event = event
@@ -50,9 +53,9 @@ class GameState:
         if event_type == "contact_event":
             self.num_consecutive_events += 1
             if self.num_consecutive_events > 2:
-                return ScoreState(other_player)
+                return ScoreState(self.other_player)
             else:
                 return GameEventState(event)
         elif event_type == "timeout":
-            return ScoreState(other_player)
+            return ScoreState(self.other_player)
 

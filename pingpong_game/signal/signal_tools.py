@@ -1,5 +1,6 @@
 from math import asin, degrees
 import numpy as np
+from pyaudio import PyAudio
 from scipy import signal
 import struct
 import time
@@ -47,6 +48,16 @@ def estimate_delay_cross_corr(sig1, sig2, delay_max):
     return est_delay
 
 
+technique_funcs = {
+    "xcorr": estimate_delay_cross_corr,
+    "beamforming": beamformer_time_delay,
+}
+
+def get_angle_from_sound(sig1, sig2, delay_max, technique="xcorr"):
+    delay = technique_funcs[technique](sig1, sig2, delay_max)
+    return delay_to_angle(delay, delay_max)
+
+
 def delay_to_angle(delay, delay_max):
     theta = asin(delay/delay_max)
     return degrees(theta)
@@ -54,6 +65,15 @@ def delay_to_angle(delay, delay_max):
 
 def get_rms(signal):
     return np.sqrt(np.mean(np.array(signal)**2))
+
+
+def get_pingpong_filter(low, high, Fs):
+    fcl = 2 * (low/Fs) # was 100
+    fch = 2 * (high/Fs)
+    fc = [fcl, fch]
+    K = 6
+    [b,a] = signal.cheby1(K, .5, fc, 'bandpass')
+    return b,a
 
 
 def load_signal(fname, split_channels=True):
@@ -73,3 +93,47 @@ def load_signal(fname, split_channels=True):
     else:
         wf.close()
         raise ValueError('not implemented')
+
+
+class WaveSignal:
+    def __init__(self, fname):
+        wf = wave.open(fname)
+        self.num_channels = wf.getnchannels()
+        self.rate = wf.getframerate()
+        self.wf = wf
+
+    def read(self, blocklen):
+        frames_raw = self.wf.readframes(blocklen)
+        signal = np.frombuffer(frames_raw, dtype=np.int16)
+        return signal
+
+    def close(self):
+        self.wf.close()
+
+
+class StreamSignal:
+    def __init__(self, num_channels, frames_per_buffer=256):
+        self.rate = 48_000
+        self.num_channels = num_channels
+        self.byte_depth = 2
+        self.frames_per_buffer = frames_per_buffer
+
+        self.pa = PyAudio()
+        self.stream = self.pa.open(
+            format=self.pa.get_format_from_width(self.byte_depth),
+            channels=self.num_channels,
+            rate=self.rate,
+            input=True,
+            output=False,
+            frames_per_buffer=self.frames_per_buffer,
+        )
+
+    def read(self, blocklen):
+        frames_raw = self.stream.read(blocklen)
+        signal = np.frombuffer(frames_raw, dtype=np.int16)
+        return signal
+
+    def close(self):
+        self.stream.stop_stream()
+        self.stream.close()
+        self.pa.terminate()
