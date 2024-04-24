@@ -29,7 +29,7 @@ def beamformer_time_delay(sig1, sig2, max_delay):
         if rms > rms_max:
             rms_max = rms
             delay_max = delay
-    return rms_max, delay_max
+    return delay_max
 
 
 def estimate_delay_cross_corr(sig1, sig2, delay_max):

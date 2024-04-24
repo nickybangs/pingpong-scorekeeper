@@ -1,8 +1,9 @@
 import logging
 import numpy as np
 from scipy import signal
+from threading import Condition
 
-from pingpong_game.signal.signal_tools import load_signal, get_rms
+from pingpong_game.sig.signal_tools import load_signal, get_rms, get_angle_from_sound
 
 log = logging.getLogger()
 
@@ -23,9 +24,16 @@ class SignalCapture:
         self.capturing_signal = False
         self.capture_ready = False
         self.caps = []
+        self.condition = Condition()
+        self.do_capture = True
 
-    def get_last_capture(self):
-        capture = self.caps.pop()
+    def clear_captures(self, i=None):
+        self.caps = []
+        self.capture_ready = False
+        self.capturing_signal = False
+
+    def get_next_capture(self):
+        capture = self.caps.pop(0)
         if len(self.caps) == 0:
             self.capture_ready = False
         return capture
@@ -90,15 +98,17 @@ class SignalCapture:
                 else:
                     l_signal = self.l_sig_buffer[lb_idx:ub_idx]
                     r_signal = self.r_sig_buffer[lb_idx:ub_idx]
-                self.caps.append(
-                    [
-                        l_signal.copy(),
-                        r_signal.copy(),
-                        (self.signal_start_idx, self.signal_stop_idx),
-                    ]
-                )
+                if self.do_capture:
+                    self.caps.append(
+                        [
+                            l_signal.copy(),
+                            r_signal.copy(),
+                            (self.signal_start_idx, self.signal_stop_idx),
+                        ]
+                    )
+                    self.capture_ready = True
+                    self.condition.notify()
                 self.capturing_signal = False
-                self.capture_ready = True
                 self.min_idx = 0
                 self.max_idx = 0
                 self.signal_start_idx = 0
@@ -108,6 +118,7 @@ class SignalCapture:
 
 def preprocess_signal(fname, energy=50, window_len=.01):
     [lch, rch, Fs] = load_signal(fname)
+    rch = rch*-1
 
     fcl = 2 * (8_000/Fs) # was 100
     fch = 2 * (10_000/Fs)
@@ -122,6 +133,8 @@ def preprocess_signal(fname, energy=50, window_len=.01):
         energy_thresh=energy,
         max_capture_len=5*Fs,
     )
+
+    sig_cap.condition.acquire()
     sig_cap.Fs = Fs
     block_len = 5*Fs
     for i in range(int(len(lch)/block_len)):
@@ -136,20 +149,14 @@ def preprocess_signal(fname, energy=50, window_len=.01):
 
 if __name__ == "__main__":
     from matplotlib import pyplot
-    fname = 'media_files/ping_pong_002.wav'
+    fname = 'pingpong_game/devtools/media_files/pp_003.wav'
     sig_cap = preprocess_signal(fname)
     Fs = sig_cap.Fs
-    start_lines = []
-    end_lines = []
-    for cap in sig_cap.caps:
-        start_lines.append(cap[-1][0])
-        end_lines.append(cap[-1][1])
-        #print(cap[-1][0], cap[-1][1])
-        print(cap[-1][0]/(Fs), cap[-1][1]/(Fs))
-        print(30*cap[-1][0]/(Fs), 30*cap[-1][1]/(Fs))
-        print()
-    # pyplot.vlines(start_lines, ymin=-1_000, ymax=1_000, color='r')
-    # pyplot.vlines(end_lines, ymin=-1_000, ymax=1_000, color='g')
-    # pyplot.plot(lch)
-    # pyplot.plot(rch+100)
-    # pyplot.show()
+    print(Fs)
+    mic_diameter_inches = 5
+    mic_diameter_m = (5/12)*.3048
+    delay_max = int((mic_diameter_m / 340)*Fs)
+    for i,cap in enumerate(sig_cap.caps[:5]):
+        lch = cap[0]
+        rch = cap[1]
+        print(f"{i}: {get_angle_from_sound(lch, rch, delay_max, 'beamforming')}")

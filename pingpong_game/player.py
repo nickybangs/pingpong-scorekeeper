@@ -1,12 +1,17 @@
 class Player:
-    def __init__(self, name=None, position=None):
+    def __init__(self, id, name=None, position=None):
         if name is None:
             name = "no name"
         self.name = name
         self.position = position
+        self.id = id
 
     def __str__(self):
+        return str(self.name)
+
+    def __repr__(self):
         return self.name
+
 
 
 if __name__ == "__main__":

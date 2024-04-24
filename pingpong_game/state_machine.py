@@ -9,6 +9,7 @@ class Event:
 
 class GameEventState:
     def __init__(self, event):
+        self.player = event.player
         self.event = event
         self.state_name = "GameEventState"
 
@@ -38,7 +39,7 @@ class GameState:
         self.num_consecutive_events = 0
 
     def transition(self, current_state, event):
-        if event.player != self.current_player:
+        if event.player.id != self.current_player.id:
             self.other_player = self.current_player
             self.current_player = event.player
             self.num_consecutive_events = 0
