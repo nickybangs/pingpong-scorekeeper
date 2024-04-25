@@ -10,14 +10,14 @@ from pingpong_game.state_machine import ErrorState, EndState
 def pause_stream(pause, stream):
     if pause.value == 0:
         pause.value = 1
-        stream.stop_stream()
+        #stream.stop_stream()
     else:
         pause.value = 0
-        stream.start_stream()
+        #stream.start_stream()
 
 def quit_stream(quit_, stream):
     quit_.value = 1
-    stream.stop_stream()
+    #stream.stop_stream()
 
 class Scoreboard:
     def __init__(self, p1=None, p2=None):
@@ -61,11 +61,11 @@ class Scoreboard:
         is_paused = self.pause.value == 1
         if not is_paused:
             self.pause.value = 1
-            self.stream.stop_stream()
+            #self.stream.stop_stream()
         messagebox.showinfo(message=msg)
         if not is_paused:
             self.pause.value = 0
-            self.stream.start_stream()
+            #self.stream.start_stream()
 
     def confirm(self, msg):
         '''
@@ -74,7 +74,7 @@ class Scoreboard:
         is_paused = self.pause.value == 1
         if not is_paused:
             self.pause.value = 1
-            self.stream.stop_stream()
+            #self.stream.stop_stream()
         answer = messagebox.askquestion(message=msg)
         if answer == "yes":
             resp = True
@@ -82,7 +82,7 @@ class Scoreboard:
             resp = False
         if not is_paused:
             self.pause.value = 0
-            self.stream.start_stream()
+            #self.stream.start_stream()
         return resp
 
     def input(self, prompt):
@@ -92,11 +92,11 @@ class Scoreboard:
         is_paused = self.pause.value == 1
         if not is_paused:
             self.pause.value = 1
-            self.stream.stop_stream()
+            #self.stream.stop_stream()
         answer = simpledialog.askstring('Input', prompt)
         if not is_paused:
             self.pause.value = 0
-            self.stream.start_stream()
+            #self.stream.start_stream()
         return answer
 
     def update_score(self, score_state):
@@ -107,7 +107,6 @@ class Scoreboard:
         else:
             return ErrorState(msg="invalid player passed to scoreboard")
 
-        print(self.score)
         if (self.score[0] >= 21) and (self.score[1] <= 19):
             return EndState(self.p1)
         elif (self.score[1] >= 21) and (self.score[0] <= 19):

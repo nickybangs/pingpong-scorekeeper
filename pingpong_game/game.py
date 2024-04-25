@@ -3,20 +3,18 @@ import random
 import scipy
 import time
 
+
+from pingpong_game.config import config
 from pingpong_game.player import Player
 from pingpong_game.scoreboard import Scoreboard
-from pingpong_game.state_machine import Event, GameState, StartState
-
+from pingpong_game.state_machine import Event, GameState, StartState, EndState
 from pingpong_game.sig.signal_capture import SignalCapture
 from pingpong_game.sig.signal_tools import get_angle_from_sound, get_pingpong_filter, get_rms
 
-SERVE_TIMEOUT = 30
-GAME_EVENT_TIMEOUT = 2
-Fs = 48_000
-mic_diameter_inches = 5
-mic_diameter_m = (5/12)*.3048
-DELAY_MAX = int((mic_diameter_m / 340)*Fs)
-MEAN_SIGNAL_ENERGY_MIN = 70
+
+mic_diameter_m = config["mic_diameter_m"]
+DELAY_MAX = config["delay_max"]
+MEAN_SIGNAL_ENERGY_MIN = config["mean_signal_energy_min"]
 
 
 class Game:
@@ -37,6 +35,8 @@ class Game:
         sound_detected = False
         timed_out = False
         self.sig_cap.condition.acquire()
+        time_waited = 0
+
         while (not sound_detected) and (not timed_out) and (self.scoreboard.quit.value != 1):
             if not self.sig_cap.capture_ready:
                 s = time.time()
@@ -46,15 +46,16 @@ class Game:
                 s = e = time.time()
                 capture_ready = True
 
-            if capture_ready:
+            if capture_ready and (self.scoreboard.quit.value != 1):
                 signal_cap = self.sig_cap.get_next_capture()
-                if (get_rms(signal_cap[0]+ get_rms(signal_cap[1]))/2 > MEAN_SIGNAL_ENERGY_MIN):
+                if ((get_rms(signal_cap[0])+ get_rms(signal_cap[1]))/2 > MEAN_SIGNAL_ENERGY_MIN):
                     sound_detected = True
                 else:
                     timeout = timeout - (e-s)
             else:
                 signal_cap = None
                 timed_out = True
+
         self.sig_cap.condition.release()
         return signal_cap
 
@@ -63,10 +64,12 @@ class Game:
         if signal_cap is None:
             player = self.current_state.player
             return Event(player, "timeout")
+
         lch, rch = signal_cap[0], signal_cap[1]
+        indces = signal_cap[-1]
         angle = get_angle_from_sound(lch, rch, DELAY_MAX, "beamforming")
         pos = self.get_position_from_angle(angle)
-        print(pos, get_rms(lch))
+        print(pos, (get_rms(lch)+get_rms(rch))/2)
         if pos == self.p1.position:
             return Event(self.p1, "contact_event")
         else:
@@ -100,11 +103,10 @@ class Game:
             # self.sig_cap.do_capture = True
             self.scoreboard.root.update()
             self.scoreboard.pause.value = 0
-            self.scoreboard.stream.start_stream()
+            #self.scoreboard.stream.start_stream()
             signal_cap = self.wait_for_sound()
             lch, rch = signal_cap[0], signal_cap[1]
             angle = get_angle_from_sound(lch, rch, DELAY_MAX, "beamforming")
-            print(angle)
             pos = self.get_position_from_angle(angle)
             player_pos_msg = (
                 f"it seems that {current_player.name} is on the {pos} side of the table, is this correct?"

@@ -67,11 +67,10 @@ def get_rms(signal):
     return np.sqrt(np.mean(np.array(signal)**2))
 
 
-def get_pingpong_filter(low, high, Fs):
+def get_pingpong_filter(low, high, Fs, K=6):
     fcl = 2 * (low/Fs) # was 100
     fch = 2 * (high/Fs)
     fc = [fcl, fch]
-    K = 6
     [b,a] = signal.cheby1(K, .5, fc, 'bandpass')
     return b,a
 

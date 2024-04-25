@@ -1,6 +1,6 @@
 import os
 
-CAPTURE_DIR = "captures"
+CAPTURE_DIR = "pingpong_game/devtools/captures"
 
 
 def get_overlap(segment, all_segments):

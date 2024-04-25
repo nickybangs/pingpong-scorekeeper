@@ -1,5 +1,6 @@
 import cv2
 import logging
+import json
 from math import asin, degrees
 from multiprocessing import Process, Value
 import numpy as np
@@ -9,27 +10,59 @@ import threading
 import time
 import wave
 
+from pingpong_game.config import config
 from pingpong_game.game import Game
+from pingpong_game.sig.helper import get_capture_fname
 from pingpong_game.state_machine import StartState,GameState
 from pingpong_game.scoreboard import Scoreboard
 from pingpong_game.sig.signal_capture import SignalCapture
 from pingpong_game.sig.signal_tools import get_pingpong_filter, load_signal
 
 
-Fs = 48_000
-SIG_CAP_WINDOW_LEN = int(.01*Fs)
-SIG_CAP_ENERGY = 50
-MAX_SIG_BUFFER_LEN = 5*Fs
-[b,a] = get_pingpong_filter(low=8000, high=10000, Fs=Fs)
 
-SERVE_TIMEOUT = 30
-GAME_EVENT_TIMEOUT = 2
-POST_SCORING_TIMEOUT = 0
+Fs = config["fs"]
+SIG_CAP_WINDOW_LEN = config["sig_cap_window_len"]
+BLOCK_LEN = config["signal_block_len"]
+SIG_CAP_ENERGY = config["sig_cap_energy"]
+MAX_SIG_BUFFER_LEN = config["max_sig_buffer_len"]
+filter_low_thresh = config["filter_low_thresh"]
+filter_high_thresh = config["filter_high_thresh"]
+K = 6
+[b,a] = get_pingpong_filter(low=filter_low_thresh, high=filter_high_thresh, Fs=Fs, K=K)
+lch_states = np.zeros(K*2)
+rch_states = np.zeros(K*2)
+
+SERVE_TIMEOUT = config["serve_timeout"]
+GAME_EVENT_TIMEOUT = config["game_event_timeout"]
+POST_SCORING_TIMEOUT = config["post_scoring_timeout"]
 
 LCH_WAIT_BUFFER = []
 RCH_WAIT_BUFFER = []
 
 src_dir = "/Users/nickybangs/home/gh/ece_6183_project"
+
+
+def audio_thread_func(audio_sync_idx, stream, sig, sig_cap, quit_, pause):
+    global lch_states, rch_states
+    while quit_.value == 0:
+        while pause.value == 1:
+            # wait for signal instead
+            time.sleep(.1)
+        audio_idx = audio_sync_idx.value
+        lb, ub = audio_idx, audio_idx + 2*BLOCK_LEN # nframes * nchannels * nbytes
+        data = sig[lb:ub]
+        audio_idx += 2*BLOCK_LEN
+        lch = data[::2]
+        rch = data[1::2]*-1
+        [lch, lch_states] = signal.lfilter(b,a,lch,zi=lch_states)
+        [rch, rch_states] = signal.lfilter(b,a,rch,zi=rch_states)
+
+        sig_cap.condition.acquire()
+        sig_cap.process(lch, rch, frame_offset=lb/2)
+        sig_cap.condition.release()
+
+        audio_sync_idx.value = audio_idx
+        stream.write(data.tobytes())
 
 
 def _stream_cb(in_data, frame_count, time_info, status):
@@ -108,6 +141,10 @@ def game_engine_thread(game):
     global done#,sig_cap
 
     game.identify_players()
+    # game.p1.name = 'emily'
+    # game.p2.name = 'nicky'
+    # game.p1.position = 'Left'
+    # game.p2.position = 'Right'
     game.game_state = GameState(game.p1, game.p2)
     game.scoreboard.message(f"begin game when ready, {game.p1} serves")
     game.scoreboard.root.update()
@@ -123,6 +160,12 @@ def game_engine_thread(game):
         game.scoreboard.p2_score_var.set(p2_score)
         game.scoreboard.root.update()
 
+    if game.scoreboard.quit.value == 1:
+        game.sig_cap.condition.acquire()
+        game.sig_cap.condition.notify()
+        game.sig_cap.condition.release()
+        game_thread.join()
+        return
     game_thread.join()
 
     if game.current_state.state_name == "ErrorState":
@@ -154,17 +197,18 @@ def main():
     done = False
     [sig, Fs] = load_signal(audio_fname, split_channels=False)
     sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_ENERGY, MAX_SIG_BUFFER_LEN)
-    Fs = 48_000
-    block_time = .025
+    DELAY_MAX = config["delay_max"]
+    print(DELAY_MAX)
+
     stream = pa.open(
         format=pa.get_format_from_width(2),
         rate=Fs,
         channels=2,
         input=False,
         output=True,
-        stream_callback=_stream_cb,
+        # stream_callback=_stream_cb,
     )
-    stream.stop_stream()
+    #stream.stop_stream()
     sb = Scoreboard()
     sb.init_tk(pause, quit_, stream)
     game = Game(sig_cap, sb)
@@ -174,15 +218,24 @@ def main():
     # play_video_thread(video_fname, stream)
     # done = True
     # vid_thread.join()
+
+    audio_thread = threading.Thread(
+        target=audio_thread_func,
+        args=(audio_sync_idx, stream, sig, sig_cap, quit_, pause),
+    )
     vid_thread = Process(
         target=play_video_proc,
         args=(video_fname, pause, quit_, audio_sync_idx),
     )
     vid_thread.start()
+    audio_thread.start()
     game_engine_thread(game)
     # sb.root.mainloop()
     # done = True
     vid_thread.join()
+    audio_thread.join()
+    # fname = get_capture_fname('pp_003_realtime_caps')
+    # sig_cap.save(fname)
 
     stream.close()
     pa.terminate()
