@@ -1,6 +1,9 @@
+"""
+    NOTE: this code is not part of the final project. this was used to varying degrees in order to evaluate the performance of
+    different parts of the signal capture and angle detection code.
+"""
 import os
 
-CAPTURE_DIR = "captures"
 
 
 def get_overlap(segment, all_segments):
@@ -26,8 +29,10 @@ def get_overlap(segment, all_segments):
     return overlaps
 
 
+
 def get_capture_fname(video_fname):
-    files = os.listdir(CAPTURE_DIR)
+    capture_dir = "pingpong_game/devtools/captures"
+    files = os.listdir(capture_dir)
     i = 0
     num = f"{i:03}"
     candidate_fname = f"{video_fname.replace('.mp4','')}_caps_{num}.json"
@@ -35,7 +40,7 @@ def get_capture_fname(video_fname):
         i += 1
         num = f"{i:03}"
         candidate_fname = f"{video_fname.replace('.mp4','')}_caps_{num}.json"
-    return  f"{CAPTURE_DIR}/{candidate_fname}"
+    return  f"{capture_dir}/{candidate_fname}"
 
 
 if __name__ == "__main__":

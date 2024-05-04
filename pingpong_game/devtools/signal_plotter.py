@@ -1,3 +1,8 @@
+"""
+    NOTE: this code is not part of the final project. this was used to varying degrees in order to evaluate the performance of
+    different parts of the signal capture and angle detection code.
+"""
+
 '''
 plot a signal with a scrolling vertical bar tracking current location in the file
 applies a bandpass filter with passband 8khz to 10khz in order to only show ping pong

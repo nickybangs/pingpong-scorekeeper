@@ -1,3 +1,7 @@
+"""
+    NOTE: this code is not part of the final project. this was used to varying degrees in order to evaluate the performance of
+    different parts of the signal capture and angle detection code.
+"""
 import cv2
 import json
 import logging
@@ -10,17 +14,17 @@ import sys
 import time
 import wave
 
-from helper import get_capture_fname
-from signal_capture import preprocess_signal
-from signal_tools import load_signal, estimate_delay
+from pingpong_game.sig.helper import get_capture_fname
+from pingpong_game.sig.signal_capture import preprocess_signal
+from pingpong_game.sig.signal_tools import load_signal, estimate_delay_cross_corr
 
 
-media_dir = "media_files"
+media_dir = "pingpong_game/devtools/media_files"
 media_fname = "pp_003"
 
 video_fname = f"{media_dir}/{media_fname}.mp4"
 audio_fname = f"{media_dir}/{media_fname}.wav"
-cap_fname = f"captures/{media_fname}_caps_001.json"
+cap_fname = f"pingpong_game/devtools/captures/{media_fname}_caps_001.json"
 
 indices = list(map(int, sys.argv[1].split(',')))
 
