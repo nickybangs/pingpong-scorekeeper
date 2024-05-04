@@ -1,16 +1,18 @@
+from functools import partial
 import json
 import logging
 import numpy as np
 from scipy import signal
 from threading import Condition
 
+from pingpong_game.config import config
 from pingpong_game.sig.signal_tools import load_signal, get_rms, get_angle_from_sound
 
 log = logging.getLogger()
 
 
 class SignalCapture:
-    def __init__(self, window_len, energy_thresh, max_capture_len, padding=50):
+    def __init__(self, window_len, energy_thresh, max_capture_len, padding=50, use_lock=True, filter_=None):
         self.window_len = int(window_len)
         self.max_capture_len = max_capture_len
         self.energy_thresh = energy_thresh
@@ -26,7 +28,9 @@ class SignalCapture:
         self.capture_ready = False
         self.caps = []
         self.consumed_caps = []
-        self.condition = Condition()
+        self.use_lock = use_lock
+        if use_lock:
+            self.condition = Condition()
         self.do_capture = True
 
     def clear_captures(self, i=None):
@@ -52,17 +56,15 @@ class SignalCapture:
     def process(self, lsig, rsig, frame_offset=0):
         block_len = len(lsig)
         lb, ub = self.w_idx, self.w_idx+block_len
-        #print(f"block lb: {lb}, block ub: {ub}")
 
         lsig = np.array(lsig).astype(np.int32)
         rsig = np.array(rsig).astype(np.int32)
 
-        self.l_sig_buffer[lb:ub] = lsig
-        self.r_sig_buffer[lb:ub] = rsig
+        self.l_sig_buffer[lb:ub] = lsig.copy()
+        self.r_sig_buffer[lb:ub] = rsig.copy()
 
         for i in range(int(block_len/self.window_len)):
             block_lb, block_ub = i*self.window_len, (i+1)*self.window_len
-            #print(f"window lb: {block_lb}, window ub: {block_ub}")
             lblock = lsig[block_lb:block_ub]
             rblock = rsig[block_lb:block_ub]
             stop_cap = False
@@ -73,7 +75,6 @@ class SignalCapture:
             min_rms = self.energy_thresh
 
             if (lrms > min_rms) or (rrms > min_rms):
-            #if ((lrms + rrms)/2) > min_rms:
                 if self.capturing_signal:
                     self.max_idx = self.w_idx + block_ub
                     self.signal_stop_idx = frame_offset + block_ub
@@ -121,7 +122,8 @@ class SignalCapture:
                         ]
                     )
                     self.capture_ready = True
-                    self.condition.notify()
+                    if self.use_lock:
+                        self.condition.notify()
                 self.capturing_signal = False
                 self.min_idx = 0
                 self.max_idx = 0
@@ -130,36 +132,42 @@ class SignalCapture:
         self.w_idx = (self.w_idx + block_len) % self.max_capture_len
 
 
-def preprocess_signal(fname, energy=50, window_len=.01):
+def preprocess_signal(fname, energy=50, window_len=.01*48_000):
     [lch, rch, Fs] = load_signal(fname)
-    rch = rch*-1
+    rch = rch*config["polarity"]
+    # get polarity from config, as well as filter values
 
-    fcl = 2 * (8_000/Fs) # was 100
+    fcl = 2 * (8_000/Fs)
     fch = 2 * (10_000/Fs)
     fc = [fcl, fch]
     K = 6
-    [b,a] = signal.cheby1(K, .5, fc, 'bandpass')
+    #[b,a] = signal.cheby1(K, .5, fc, 'bandpass')
+    [b,a] = signal.butter(K, fc, 'bandpass')
     lch = signal.lfilter(b,a,lch)
     rch = signal.lfilter(b,a,rch)
 
     sig_cap = SignalCapture(
-        window_len=window_len*Fs,
+        window_len=window_len,
         energy_thresh=energy,
         max_capture_len=5*Fs,
+        use_lock=True,
+        filter_=(b,a),
     )
 
-    sig_cap.condition.acquire()
     sig_cap.Fs = Fs
-    block_len = int(.5*Fs)
-    block_len = int(1*window_len*Fs)
+    block_len = int(1*window_len)
+    print(len(lch), block_len)
+    sig_cap.condition.acquire()
     for i in range(int(len(lch)/block_len)):
+        print(f"\r{i}        ", end='')
         frame_offset = i*block_len
         sig_cap.process(
             lch[i*block_len : (i+1)*block_len],
             rch[i*block_len : (i+1)*block_len],
             frame_offset=frame_offset,
         )
-        #_ = input()
+    print()
+    sig_cap.condition.release()
     return sig_cap
 
 

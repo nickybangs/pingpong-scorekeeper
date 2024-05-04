@@ -15,9 +15,8 @@ from pingpong_game.game import Game
 from pingpong_game.sig.helper import get_capture_fname
 from pingpong_game.state_machine import StartState,GameState
 from pingpong_game.scoreboard import Scoreboard
-from pingpong_game.sig.signal_capture import SignalCapture
+from pingpong_game.sig.signal_capture import preprocess_signal
 from pingpong_game.sig.signal_tools import get_pingpong_filter, load_signal
-
 
 
 Fs = config["fs"]
@@ -27,10 +26,6 @@ SIG_CAP_ENERGY = config["sig_cap_energy"]
 MAX_SIG_BUFFER_LEN = config["max_sig_buffer_len"]
 filter_low_thresh = config["filter_low_thresh"]
 filter_high_thresh = config["filter_high_thresh"]
-K = 6
-[b,a] = get_pingpong_filter(low=filter_low_thresh, high=filter_high_thresh, Fs=Fs, K=K)
-lch_states = np.zeros(K*2)
-rch_states = np.zeros(K*2)
 
 SERVE_TIMEOUT = config["serve_timeout"]
 GAME_EVENT_TIMEOUT = config["game_event_timeout"]
@@ -38,31 +33,77 @@ POST_SCORING_TIMEOUT = config["post_scoring_timeout"]
 
 src_dir = "/Users/nickybangs/home/gh/ece_6183_project"
 
+def sig_cap_notif_thread(sig_cap, quit_, audio_sync_idx):
+    while quit_.value == 0:
+        if len(sig_cap.caps) == 0:
+            break
+        audio_idx = audio_sync_idx.value
+        lb, ub = audio_idx, audio_idx + 2*BLOCK_LEN # nframes * nchannels * nbytes
+        sig_cap.capture_ready = False
 
-def audio_thread_func(audio_sync_idx, stream, sig, sig_cap, quit_, pause):
-    '''
-    process audio stream as if it were real time, keeping audio index in sync
-    with video frames for better playback
-    '''
-    global lch_states, rch_states
+        more_overlap = True
+        while more_overlap:
+            # get first index, captures are popped by the consumer
+            # after notification is sent
+            cap_start, cap_end = sig_cap.caps[0][-1]
+            # check if the next capture overlaps with current audio segment
+            # send notification if so
+            if (cap_start < int(ub/2)) and (cap_end > int(lb/2)):
+                print('cap detected')
+                sig_cap.capture_ready = True
+                sig_cap.condition.acquire()
+                sig_cap.condition.notify()
+                sig_cap.condition.wait()
+                sig_cap.condition.release()
+                sig_cap.capture_ready = False
+            else:
+                more_overlap = False
+            if (len(sig_cap.caps) == 0):
+                more_overlap = False
+
+
+def audio_thread_func(audio_sync_idx, sig, quit_, pause, sig_cap):
+    # output stream for audio playback
+    pa = PyAudio()
+    stream = pa.open(
+        format=pa.get_format_from_width(2),
+        rate=Fs,
+        channels=2,
+        input=False,
+        output=True,
+    )
     while quit_.value == 0:
         while pause.value == 1:
+            # wait for signal instead
             time.sleep(.1)
         audio_idx = audio_sync_idx.value
         lb, ub = audio_idx, audio_idx + 2*BLOCK_LEN # nframes * nchannels * nbytes
         data = sig[lb:ub]
-        audio_idx += 2*BLOCK_LEN
-        lch = data[::2]
-        rch = data[1::2]*-1
-        [lch, lch_states] = signal.lfilter(b,a,lch,zi=lch_states)
-        [rch, rch_states] = signal.lfilter(b,a,rch,zi=rch_states)
-
-        sig_cap.condition.acquire()
-        sig_cap.process(lch, rch, frame_offset=lb/2)
-        sig_cap.condition.release()
-
-        audio_sync_idx.value = audio_idx
         stream.write(data.tobytes())
+        audio_idx += 2*BLOCK_LEN
+        audio_sync_idx.value = audio_idx
+
+        more_overlap = True
+        while more_overlap:
+            cap_start, cap_end = sig_cap.caps[0][-1]
+            # check if the next capture overlaps with current audio segment
+            # send notification if so
+            if (cap_start < int(ub/2)) and (cap_end > int(lb/2)):
+                print('cap detected')
+                sig_cap.capture_ready = True
+                sig_cap.condition.acquire()
+                sig_cap.condition.notify()
+                sig_cap.condition.wait()
+                sig_cap.condition.release()
+                sig_cap.capture_ready = False
+            else:
+                more_overlap = False
+            if (len(sig_cap.caps) == 0):
+                more_overlap = False
+
+    # close the output audio stream
+    stream.close()
+    pa.terminate()
 
 
 def play_video_proc(fname, PAUSE, QUIT, audio_sync_idx):
@@ -106,13 +147,13 @@ def core_game_thread(game):
 
 
 def game_engine_thread(game):
-    global done#,sig_cap
-
     game.identify_players()
-    # game.p1.name = 'kyle'
-    # game.p2.name = 'doug'
-    # game.p1.position = 'Right'
-    # game.p2.position = 'Left'
+    # game.p1.name = "kyle"
+    # game.p1.pos = "Right"
+    # game.p2.name = "doug"
+    # game.p2.pos = "Left"
+    game.scoreboard.p1_str_var.set(game.p1.name)
+    game.scoreboard.p2_str_var.set(game.p2.name)
     game.game_state = GameState(game.p1, game.p2)
     game.scoreboard.message(f"begin game when ready, {game.p1} serves")
     game.scoreboard.root.update()
@@ -152,62 +193,70 @@ def game_engine_thread(game):
 
 
 def main():
-    global audio_sync_idx
-    pa = PyAudio()
+    # multiprocessing.Value variables are used instead of globals
+    # this allows the variables to be shared across the different threads
+    # and processes. The pause and quit_ variables are used by the tkinter scoreboard
+    # the audio_sync_idx variable is used to keep the video and audio in sync
     pause = Value('i', 1)
     quit_ = Value('i', 0)
     audio_sync_idx = Value('i', 0)
 
+    # sample video used for demo, these paths can be changed to score different
+    # videos. the mp4 and wav files should be synchronized beforehand in order
+    # to get accurate playback
     audio_fname = f"{src_dir}/pingpong_game/devtools/media_files/pp_003.wav"
     video_fname = f"{src_dir}/pingpong_game/devtools/media_files/pp_003.mp4"
-    # audio_fname = f"{src_dir}/pingpong_game/devtools/media_files/kyle-doug-pingpong.wav"
-    # video_fname = f"{src_dir}/pingpong_game/devtools/media_files/kyle-doug-pingpong.mp4"
-
-    global sig, sig_cap, done
-    done = False
-    [sig, Fs] = load_signal(audio_fname, split_channels=False)
-    sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_ENERGY, MAX_SIG_BUFFER_LEN,filter_=(b,a))
-    DELAY_MAX = config["delay_max"]
-
-    stream = pa.open(
-        format=pa.get_format_from_width(2),
-        rate=Fs,
-        channels=2,
-        input=False,
-        output=True,
-        # stream_callback=_stream_cb,
+    # preprocess the audio file using the real time algorithm this makes sure
+    # the results match what is observed in real time and don't get affected by
+    # the audio syncing with the video
+    sig_cap = preprocess_signal(
+        audio_fname,
+        SIG_CAP_ENERGY,
+        window_len=SIG_CAP_WINDOW_LEN,
     )
-    #stream.stop_stream()
+    sig_cap.capture_ready = False
+    print(sig_cap.caps[0][-1])
+    global audio_idx
+    audio_idx = 0
+
+    # set up tkinter scoreboard and game object
     sb = Scoreboard()
     sb.init_tk(pause, quit_)
     game = Game(sig_cap, sb)
-    # vid_thread = threading.Thread(target=game_engine_thread, args=(game,))
-    # vid_thread.daemon = True
-    # vid_thread.start()
-    # play_video_thread(video_fname, stream)
-    # done = True
-    # vid_thread.join()
 
+    # load the signal used for audio playback
+    [sig, Fs] = load_signal(audio_fname, split_channels=False)
+
+    # start audio thread, using audio_sync_idx to make sure audio and
+    # video are synchronized
     audio_thread = threading.Thread(
         target=audio_thread_func,
-        args=(audio_sync_idx, stream, sig, sig_cap, quit_, pause),
+        args=(audio_sync_idx, sig, quit_, pause, sig_cap),
     )
+
+    # sigcap_thread = threading.Thread(
+    #     target=sig_cap_notif_thread,
+    #     args=(sig_cap, quit_, audio_sync_idx),
+    # )
+    # start video in a separate process, it doesn't work if you try
+    # to play it in a thread
     vid_thread = Process(
         target=play_video_proc,
         args=(video_fname, pause, quit_, audio_sync_idx),
     )
     vid_thread.start()
     audio_thread.start()
+    #sigcap_thread.start()
+
+    # run game engine as main thread whlie video plays
+    # it is required to be the main thread by tkinter
     game_engine_thread(game)
-    # sb.root.mainloop()
-    # done = True
+
+    # wait for the video and audio threads to finish before exiting
     vid_thread.join()
     audio_thread.join()
-    # fname = get_capture_fname('pp_003_realtime_caps')
-    # sig_cap.save(fname)
+    #sigcap_thread.join()
 
-    stream.close()
-    pa.terminate()
 
 
 if __name__ == "__main__":
