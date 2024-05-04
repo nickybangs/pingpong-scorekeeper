@@ -1,23 +1,25 @@
+'''
+    Video playback version of the scorekeeper. Most of the logic is the same as the realtime version, but slightly
+    adjusted to try to handle synchronizing the audio to the video.
+
+    NOTE: due to the synchronization, the signal capture results are not always consistent. This is only reliable as a
+    demonstration device where you can re-run the program to get the results that would be observed in real time.
+    To simulate realtime results, it is best to use the preprocess_signal function in sig/signal_capture
+'''
 import cv2
-import logging
-import json
-from math import asin, degrees
 from multiprocessing import Process, Value
 import numpy as np
-from pyaudio import PyAudio, paContinue
+from pyaudio import PyAudio
 from scipy import signal
 import threading
 import time
-import wave
 
 from pingpong_game.config import config
 from pingpong_game.game import Game
-from pingpong_game.sig.helper import get_capture_fname
 from pingpong_game.state_machine import StartState,GameState
 from pingpong_game.scoreboard import Scoreboard
 from pingpong_game.sig.signal_capture import SignalCapture
 from pingpong_game.sig.signal_tools import get_pingpong_filter, load_signal
-
 
 
 Fs = config["fs"]
@@ -36,8 +38,6 @@ SERVE_TIMEOUT = config["serve_timeout"]
 GAME_EVENT_TIMEOUT = config["game_event_timeout"]
 POST_SCORING_TIMEOUT = config["post_scoring_timeout"]
 
-src_dir = "/Users/nickybangs/home/gh/ece_6183_project"
-
 
 def audio_thread_func(audio_sync_idx, stream, sig, sig_cap, quit_, pause):
     '''
@@ -46,44 +46,66 @@ def audio_thread_func(audio_sync_idx, stream, sig, sig_cap, quit_, pause):
     '''
     global lch_states, rch_states
     while quit_.value == 0:
+        # if paused, spin wait until resumed - NOTE: could be improved with signals
         while pause.value == 1:
             time.sleep(.1)
+        # update audio index value to sync with video (video processing code sets this every frame)
         audio_idx = audio_sync_idx.value
-        lb, ub = audio_idx, audio_idx + 2*BLOCK_LEN # nframes * nchannels * nbytes
+        lb, ub = audio_idx, audio_idx + 2*BLOCK_LEN
         data = sig[lb:ub]
         audio_idx += 2*BLOCK_LEN
         lch = data[::2]
-        rch = data[1::2]*-1
+        rch = data[1::2]*config["polarity"]
         [lch, lch_states] = signal.lfilter(b,a,lch,zi=lch_states)
         [rch, rch_states] = signal.lfilter(b,a,rch,zi=rch_states)
 
+        # run signal through processor. the reason for the inconsistent results can be seen in this thread
+        # since the starting index can change at random, it is possible that different signals will be passed to the processor
+        # this can have the effect that some captures that would occur in a realtime setting may be missed in the video playback
+        # i tried various things to fix this, but in the end nothing ended up working nicely with the audio playback so i returned
+        # to this version. the corruption only happens every once and a while though and in general the results in this version
+        # resemble the realtime version. as noted above though, to get the actual results as a reference, the preprocess_signal
+        # function should be used
         sig_cap.condition.acquire()
         sig_cap.process(lch, rch, frame_offset=lb/2)
         sig_cap.condition.release()
 
+        # update the audio index
         audio_sync_idx.value = audio_idx
+        # output to the audio stream
         stream.write(data.tobytes())
 
 
 def play_video_proc(fname, PAUSE, QUIT, audio_sync_idx):
+    '''
+    play the video frames in a separate process. updating the audio index each frame to keep audio and video in sync
+    NOTE: the PAUSE and QUIT values are shared with the main thread and the audio thread. multiprocessing.Value variables
+    are used in all of the code instead of globals since Value variables are needed to share data between processes
+    Though they aren't needed in the realtime version, they are used so that more code could be compatible for both versions
+    '''
     cap = cv2.VideoCapture(fname)
     video_fps = cap.get(cv2.CAP_PROP_FPS)
+    # set window size and location
     cv2.namedWindow("output", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("output", 200, 100)
     cv2.moveWindow("output", 50,380)
+    # display video
     while(cap.isOpened()):
         ret, frame = cap.read()
         if ret == True:
             cv2.imshow('output', frame)
             key_ = cv2.waitKey(25)
 
+            # break if quit button pressed
             if QUIT.value == 1:
                 break
 
+            # if paused, just wait for resume button
             while PAUSE.value == 1:
                 key_ = cv2.waitKey(5)
             frame_number = cap.get(cv2.CAP_PROP_POS_FRAMES)
             timestamp = frame_number/video_fps
+            # set the audio index based on the current time in the video
             audio_sync_idx.value = int(timestamp*Fs)*2
         else:
             break
@@ -91,7 +113,10 @@ def play_video_proc(fname, PAUSE, QUIT, audio_sync_idx):
     cv2.destroyAllWindows()
 
 
-def core_game_thread(game):
+def game_event_thread(game):
+    '''
+    similar to the realtime function of the same name, doesn't include funcionality only needed for realtime
+    '''
     event = game.wait_for_game_event(SERVE_TIMEOUT)
     game.current_state = game.game_state.transition(game.current_state, event)
 
@@ -106,19 +131,16 @@ def core_game_thread(game):
 
 
 def game_engine_thread(game):
-    global done#,sig_cap
-
+    '''
+    similar to realtime version function of the same name
+    '''
     game.identify_players()
-    # game.p1.name = 'kyle'
-    # game.p2.name = 'doug'
-    # game.p1.position = 'Right'
-    # game.p2.position = 'Left'
     game.game_state = GameState(game.p1, game.p2)
     game.scoreboard.message(f"begin game when ready, {game.p1} serves")
     game.scoreboard.root.update()
     game.current_state = StartState(game.p1)
 
-    game_thread = threading.Thread(target=core_game_thread, args=(game,))
+    game_thread = threading.Thread(target=game_event_thread, args=(game,))
     game_thread.start()
     while ((game.current_state.state_name not in ["ErrorState", "EndState"])
            and (game.scoreboard.quit.value != 1)):
@@ -152,42 +174,38 @@ def game_engine_thread(game):
 
 
 def main():
-    global audio_sync_idx
+    '''
+    main function for video playback version. initializes the game, video and audio streams.
+    playback is paused at start, and resumed only after player identification takes place
+    '''
     pa = PyAudio()
+    # multiprocessing.Value variables needed to share memory between processes
     pause = Value('i', 1)
     quit_ = Value('i', 0)
     audio_sync_idx = Value('i', 0)
 
-    audio_fname = f"{src_dir}/pingpong_game/devtools/media_files/pp_003.wav"
-    video_fname = f"{src_dir}/pingpong_game/devtools/media_files/pp_003.mp4"
-    # audio_fname = f"{src_dir}/pingpong_game/devtools/media_files/kyle-doug-pingpong.wav"
-    # video_fname = f"{src_dir}/pingpong_game/devtools/media_files/kyle-doug-pingpong.mp4"
+    audio_fname = config["audio_fname"]
+    video_fname = config["video_fname"]
 
-    global sig, sig_cap, done
-    done = False
+    # load the signal from the audio fname provided in the config
     [sig, Fs] = load_signal(audio_fname, split_channels=False)
-    sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_ENERGY, MAX_SIG_BUFFER_LEN,filter_=(b,a))
-    DELAY_MAX = config["delay_max"]
+    # initialize a signal capture object
+    sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_ENERGY, MAX_SIG_BUFFER_LEN)
 
+    # open an output stream for playback
     stream = pa.open(
         format=pa.get_format_from_width(2),
         rate=Fs,
         channels=2,
         input=False,
         output=True,
-        # stream_callback=_stream_cb,
     )
-    #stream.stop_stream()
+    # initialize a scoreboard interface and the game object
     sb = Scoreboard()
     sb.init_tk(pause, quit_)
     game = Game(sig_cap, sb)
-    # vid_thread = threading.Thread(target=game_engine_thread, args=(game,))
-    # vid_thread.daemon = True
-    # vid_thread.start()
-    # play_video_thread(video_fname, stream)
-    # done = True
-    # vid_thread.join()
 
+    # start the audio processing thread and the video Process
     audio_thread = threading.Thread(
         target=audio_thread_func,
         args=(audio_sync_idx, stream, sig, sig_cap, quit_, pause),
@@ -198,13 +216,12 @@ def main():
     )
     vid_thread.start()
     audio_thread.start()
+    # run the main game loop
     game_engine_thread(game)
-    # sb.root.mainloop()
-    # done = True
+
+    # after game, wait for audio and video to finish before closing
     vid_thread.join()
     audio_thread.join()
-    # fname = get_capture_fname('pp_003_realtime_caps')
-    # sig_cap.save(fname)
 
     stream.close()
     pa.terminate()

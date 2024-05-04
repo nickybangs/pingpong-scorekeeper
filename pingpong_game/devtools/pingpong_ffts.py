@@ -1,3 +1,7 @@
+"""
+    NOTE: this code is not part of the final project. this was used to varying degrees in order to evaluate the performance of
+    different parts of the signal capture and angle detection code.
+"""
 from matplotlib import pyplot
 import numpy as np
 

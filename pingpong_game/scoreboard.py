@@ -1,25 +1,33 @@
+"""
+    scoreboard code. implements any user interface behavior as well as basic scorekeeping logic
+    Tkinter is used for the interface
+"""
 from functools import partial
-import sys
 import tkinter as Tk
 from tkinter import messagebox, simpledialog
-from threading import Thread
 
 from pingpong_game.state_machine import ErrorState, EndState
 
 
+# string constants for arrow strings used in the interface
 LEFT_ARROW = b'\xe2\x87\x90'.decode()
 UP_ARROW = b'\xe2\x87\x91'.decode()
 RIGHT_ARROW = b'\xe2\x87\x92'.decode()
 DOWN_ARROW = b'\xe2\x87\x93'.decode()
 
+# if pause button is pressed, set the shared pause variable to 1 or 0 depending on current state
+# in the realtime game this turns off the capturing of incoming signals
+# in the video playback version this pauses both the video and audio streams
 def pause_stream(pause):
     if pause.value == 0:
         pause.value = 1
     else:
         pause.value = 0
 
+# set the shared quit_ variable to 1 when quit button is pressed
 def quit_stream(quit_):
     quit_.value = 1
+
 
 class Scoreboard:
     def __init__(self, p1=None, p2=None):
@@ -30,12 +38,16 @@ class Scoreboard:
         self.points_to_win = 21
         self.win_by = 2
 
+    # change the 'now serving' label depending on who was detected as the server
+    # NOTE: the game does not enforce any serving rules such as 5 serves on each side
+    # it just detects where the serve came from and displays the value accordingly
     def set_server(self, pos):
         if pos == "Left":
             self.serving_arrow_label.set(LEFT_ARROW)
         else:
             self.serving_arrow_label.set(RIGHT_ARROW)
 
+    # initialize TkInter variables and gui using a grid layout for more control over display
     def init_tk(self, pause, quit_):
         root = Tk.Tk()
         root.geometry("330x330+1000+100")
@@ -45,14 +57,18 @@ class Scoreboard:
         self.p2_score_var = Tk.StringVar(value="0")
         serving_str = Tk.StringVar(value=LEFT_ARROW)
 
+        # player labels and scores
         playerone_label = Tk.Label(root, textvariable=self.p1_str_var,font=("Arial", 20))
         playerone_score = Tk.Label(root, textvariable=self.p1_score_var,font=("Arial", 15))
         playertwo_label = Tk.Label(root, textvariable=self.p2_str_var,font=("Arial", 20))
         playertwo_score = Tk.Label(root, textvariable=self.p2_score_var,font=("Arial", 15))
         empty_label = Tk.Label(root, text="")
+
+        # now serving label
         serving_label = Tk.Label(root, text="Now Serving", font=("Arial", 15))
         serving_arrow_label = Tk.Label(root, textvariable=serving_str, font=("Arial",15))
 
+        # labels and functions to adjust each players score
         adjust_p1_label = Tk.Label(root, text="Adjust Score",font=("Arial", 15))
         adjust_p2_label = Tk.Label(root, text="Adjust Score",font=("Arial", 15))
 
@@ -66,6 +82,7 @@ class Scoreboard:
         adjust_p2_up_button = Tk.Button(root, text=UP_ARROW, command=p2_adjust_up)
         adjust_p2_down_button = Tk.Button(root, text=DOWN_ARROW, command=p2_adjust_down)
 
+        # state handlingn functions
         self.quit = quit_
         self.pause = pause
         pause_func = partial(pause_stream, pause)
@@ -73,7 +90,7 @@ class Scoreboard:
         pause_button = Tk.Button(root, text="Pause/Resume", command=pause_func)
         quit_button = Tk.Button(root, text="Quit", command=quit_func)
 
-
+        # layout setup
         playerone_label.grid(row=0,column=0,ipady=10)
         playerone_score.grid(row=1,column=0)
         playertwo_label.grid(row=0,column=2,ipadx=0,ipady=10)
@@ -95,6 +112,9 @@ class Scoreboard:
         self.root = root
 
     def adjust_score(self, player, up_or_down):
+        '''
+        change the given players score according to the up_or_down variable
+        '''
         if player == 'p1':
             if up_or_down == "up":
                 self.score[0] = min(self.score[0] + 1, 21)
@@ -109,6 +129,10 @@ class Scoreboard:
         self.p2_score_var.set(self.score[1])
 
     def message(self, msg):
+        '''
+        output a message alert to the player, pausing any capturing while waiting
+        for the user to exit the prompt
+        '''
         is_paused = self.pause.value == 1
         if not is_paused:
             self.pause.value = 1
@@ -145,6 +169,11 @@ class Scoreboard:
         return answer
 
     def update_score(self, score_state):
+        '''
+        add one point to the player associated with the given ScoreState
+        if one player is determined to be the winner, return the EndState
+        with the winning player as the argument
+        '''
         if score_state.player == self.p1:
             self.score[0] += 1
         elif score_state.player == self.p2:
@@ -162,6 +191,9 @@ class Scoreboard:
 
 
 if __name__ == "__main__":
+    '''
+    testing for the scoreboard gui
+    '''
     from multiprocessing import Value
     pause = Value('i', 0)
     quit_ = Value('i', 0)

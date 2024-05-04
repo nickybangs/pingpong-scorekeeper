@@ -1,9 +1,12 @@
+'''
+    demo program to display the real-time signal capture and angle detection mechanism
+    this code just listed for incoming siginals and outputs their angle and position
+    execution stops when the scoreboard quit button is pressed. two microphones are required.
+'''
 from multiprocessing import Value
 import numpy as np
 from scipy import signal
-import sys
 import threading
-import time
 import wave
 
 from pingpong_game.config import config
@@ -12,10 +15,8 @@ from pingpong_game.state_machine import StartState,GameState
 from pingpong_game.scoreboard import Scoreboard
 from pingpong_game.sig.signal_capture import SignalCapture
 from pingpong_game.sig.signal_tools import (
-    WaveSignal,
     StreamSignal,
     get_pingpong_filter,
-    get_polarity,
 )
 
 Fs = config["fs"]
@@ -30,10 +31,6 @@ K = 6
 lch_states = np.zeros(K*2)
 rch_states = np.zeros(K*2)
 
-SERVE_TIMEOUT = config["serve_timeout"]
-GAME_EVENT_TIMEOUT = config["game_event_timeout"]
-POST_SCORING_TIMEOUT = config["post_scoring_timeout"]
-
 
 def audio_thread_func(sig, sig_cap, quit_, pause, output_file):
     '''
@@ -45,11 +42,6 @@ def audio_thread_func(sig, sig_cap, quit_, pause, output_file):
     # used for identifying the frame boundaries of a captured sound
     audio_idx = 0
     while quit_.value == 0:
-        # if 'pause' is set, no sounds are captured by the signal capture class
-        if pause.value == 1:
-            sig_cap.do_capture = False
-        else:
-            sig_cap.do_capture = True
         data = sig.read(2*BLOCK_LEN)
         # split out left and right channels for processing
         lch = data[::2]
@@ -81,39 +73,46 @@ def signal_waiter(game):
 
 def main():
     quit_ = Value('i', 0)
-    # pause is used in this case to turn off signal captures, it is used
-    # when getting input from the user, in which case we don't want to do anything
-    # with incoming signals
+    # NOTE: for this simple demo, the pause functionality is not implemented
+    # it is included only because certain other parts of the code expect it
     pause = Value('i', 0)
 
+    # save the captures to a wave file for post processing
     fname = "sig_cap_demo.wav"
     output_file = wave.open(fname, "wb")
     output_file.setnchannels(2)
     output_file.setsampwidth(2)
     output_file.setframerate(Fs)
 
+    # set up an incoming stream and signal capture object
     sig = StreamSignal(frames_per_buffer=5*256)
     sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_ENERGY, MAX_SIG_BUFFER_LEN)
 
+    # set up a scoreboard and game object - these are required for the event waiting logic
+    # and the quit function
     sb = Scoreboard()
     sb.init_tk(pause, quit_)
     game = Game(sig_cap, sb)
 
+    # start the audio processing thread
     audio_thread = threading.Thread(
         target=audio_thread_func,
         args=(sig, sig_cap, quit_, pause, output_file),
     )
+    # start the signal waiter
     signal_waiter_thread = threading.Thread(
         target=signal_waiter,
         args=(game,),
     )
 
+    # start a "game" - just need enough state to get the event waiter to work
     game.current_state = StartState(game.p1)
     audio_thread.start()
     signal_waiter_thread.start()
     while (game.scoreboard.quit.value == 0):
         game.scoreboard.root.update()
 
+    # if the quit button is pressed - tell the waiter to stop waiting then wait for threads
     sig_cap.condition.acquire()
     sig_cap.condition.notify()
     sig_cap.condition.release()

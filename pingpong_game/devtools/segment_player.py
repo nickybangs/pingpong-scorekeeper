@@ -1,3 +1,9 @@
+"""
+    NOTE: this code is not part of the final project. this was used to varying degrees in order to evaluate the performance of
+    different parts of the signal capture and angle detection code.
+"""
+
+
 '''
 given a media filename loads the video and audio and plays each detected segment
 for each segment the corresponding video label is shown if there is any overlap

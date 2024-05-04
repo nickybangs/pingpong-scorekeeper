@@ -16,6 +16,8 @@ def beamformer_time_delay(sig1, sig2, max_delay):
     rms_max = 0
     delay_max = None
     len_ref = len(sig1)
+    # iterate over all possible delays between -max delay and +max delay
+    # the estimated delay is that which results in the signal with the highest energy
     for delay in range(-max_delay,max_delay+1):
         if delay > 0:
             ref = sig1[:len_ref-delay]
@@ -34,14 +36,14 @@ def beamformer_time_delay(sig1, sig2, max_delay):
 
 def estimate_delay_cross_corr(sig1, sig2, delay_max):
     '''
-    cross correlate the two channels, corr_max is the index of the max
-    correlation, which should be when the signals are aligned
-    if this value is greater than the midpoint that indicates the right
-    channel is delayed, otherwise the left
-    the estimated delay time is the delay in samples / sample rate
+    cross correlate the two channels, corr_max is the index of the max correlation,which should be when
+    the signals are aligned. if this value is greater than the midpoint that indicates the right
+    channel is delayed, otherwise the left the estimated delay time is the delay in samples / sample rate
     '''
     mid_point = int(len(sig1)/2)
     corr = signal.correlate(sig1, sig2, 'same')
+    # to get better results we only look at results within +- delay_max of the midpoint
+    # this helps ensure we get sensible results
     corr_valid = corr[mid_point-delay_max : mid_point+delay_max]
     corr_max = corr_valid.argmax()
     est_delay = delay_max - corr_max
@@ -53,6 +55,46 @@ technique_funcs = {
     "beamforming": beamformer_time_delay,
 }
 
+def get_angle_from_sound(sig1, sig2, delay_max, technique="xcorr"):
+    '''
+    get the angle of the incoming sound by estimated the delay using the specified technique
+    cross correlation is used by default
+    '''
+    delay = technique_funcs[technique](sig1, sig2, delay_max)
+    return delay_to_angle(delay, delay_max)
+
+
+def delay_to_angle(delay, delay_max):
+    '''
+    return the estimated angle of arrival based on the delay between the signals and the maximum
+    delay possible
+    '''
+    theta = acos(delay/delay_max)
+    # for the ping pong game the angles are assume to be -90 degrees to +90 degrees
+    return 90 - degrees(theta)
+
+def get_rms(signal):
+    '''
+    return the root mean square of the input signal or segment
+    '''
+    return np.sqrt(np.mean(np.array(signal)**2))
+
+
+def get_pingpong_filter(low, high, Fs, K=6, filt_type="cheby"):
+    '''
+    return the desired bandpass filter to be used (8000, 10000) does a good job of only
+    passing ping pong sounds
+    '''
+    fcl = 2 * (low/Fs) # usually 8,000
+    fch = 2 * (high/Fs) # usually 10,000
+    fc = [fcl, fch]
+    # use either a chebyshev1 or butterworth filter
+    if filt_type == "cheby":
+        [b,a] = signal.cheby1(K, .5, fc, 'bandpass')
+    else:
+        [b,a] = signal.butter(K, fc, 'bandpass')
+    return b,a
+
 
 def get_polarity(sig1, sig2):
     '''
@@ -60,6 +102,7 @@ def get_polarity(sig1, sig2):
     will have signals with flipped signs, this tells the code if it needs to
     reverse this
     '''
+    # see documentation for why this is expected to work in general
     opp_sign_max = signal.correlate(sig1, -1*sig2, 'valid')
     same_sign_max = signal.correlate(sig1, sig2, 'valid')
     if opp_sign_max > same_sign_max:
@@ -68,33 +111,11 @@ def get_polarity(sig1, sig2):
         return 1
 
 
-def get_angle_from_sound(sig1, sig2, delay_max, technique="xcorr"):
-    delay = technique_funcs[technique](sig1, sig2, delay_max)
-    return delay_to_angle(delay, delay_max)
-
-
-# def delay_to_angle(delay, delay_max):
-#     theta = asin(delay/delay_max)
-#     return degrees(theta)
-
-def delay_to_angle(delay, delay_max):
-    theta = acos(delay/delay_max)
-    return 90 - degrees(theta)
-
-def get_rms(signal):
-    return np.sqrt(np.mean(np.array(signal)**2))
-
-
-def get_pingpong_filter(low, high, Fs, K=6):
-    fcl = 2 * (low/Fs) # was 100
-    fch = 2 * (high/Fs)
-    fc = [fcl, fch]
-    #[b,a] = signal.cheby1(K, .5, fc, 'bandpass')
-    [b,a] = signal.butter(K, fc, 'bandpass')
-    return b,a
-
-
 def load_signal(fname, split_channels=True):
+    '''
+    load a signal from the wave filepath. split into two channels if requested
+    return the signal and Fs
+    '''
     wf = wave.open(fname)
     num_channels = wf.getnchannels()
     Fs = wf.getframerate()
@@ -112,31 +133,11 @@ def load_signal(fname, split_channels=True):
         wf.close()
         raise ValueError('not implemented')
 
-'''
-    two classes to provide similar behavior for the realtime scorekeeper
-    for both a wave input file and an input stream
-
-    the wave input file is mainly just useful for testing, to use the scorekeeper
-    with a pre-recorded game the video scoreboard is recommended instead
-'''
-
-class WaveSignal:
-    def __init__(self, fname):
-        wf = wave.open(fname)
-        self.num_channels = wf.getnchannels()
-        self.rate = wf.getframerate()
-        self.wf = wf
-
-    def read(self, blocklen):
-        frames_raw = self.wf.readframes(blocklen)
-        signal = np.frombuffer(frames_raw, dtype=np.int16)
-        return signal
-
-    def close(self):
-        self.wf.close()
-
 
 class StreamSignal:
+    '''
+    helper class to read in blocks from a two channel input stream
+    '''
     def __init__(self, frames_per_buffer=256):
         self.rate = 48_000
         self.frames_per_buffer = frames_per_buffer

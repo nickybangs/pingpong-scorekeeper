@@ -1,7 +1,9 @@
+"""
+entrypoint for real time scorekeeping game. an input with 2 channels is required to use this program.
+"""
 from multiprocessing import Value
 import numpy as np
 from scipy import signal
-import sys
 import threading
 import time
 import wave
@@ -11,12 +13,7 @@ from pingpong_game.game import Game
 from pingpong_game.state_machine import StartState,GameState
 from pingpong_game.scoreboard import Scoreboard
 from pingpong_game.sig.signal_capture import SignalCapture
-from pingpong_game.sig.signal_tools import (
-    WaveSignal,
-    StreamSignal,
-    get_pingpong_filter,
-    get_polarity,
-)
+from pingpong_game.sig.signal_tools import StreamSignal, get_pingpong_filter
 
 
 # set up global settings using the config file
@@ -45,7 +42,7 @@ def audio_thread_func(sig, sig_cap, quit_, pause, output_file):
     global lch_states, rch_states
 
     # keep track of current index in a given channel of the audio stream
-    # used for identifying the frame boundaries of a captured sound
+    # used for identifying the frame boundaries of a captured sound - mainly helpful for debugging
     audio_idx = 0
     while quit_.value == 0:
         # if 'pause' is set, no sounds are captured by the signal capture class
@@ -56,6 +53,7 @@ def audio_thread_func(sig, sig_cap, quit_, pause, output_file):
         data = sig.read(2*BLOCK_LEN)
         # split out left and right channels for processing
         lch = data[::2]
+        # multiply right channel by calculated / preconfigured polarity
         rch = data[1::2] * config["polarity"]
         # filter each channel to only detect relevant frequency band
         [lch, lch_states] = signal.lfilter(b,a,lch,zi=lch_states)
@@ -69,10 +67,11 @@ def audio_thread_func(sig, sig_cap, quit_, pause, output_file):
         sig_cap.condition.release()
         # we are tracking frame index so just offset by block length
         audio_idx += BLOCK_LEN
+        # write captured signal to file for post-processing, testing, validating
         output_file.writeframesraw(data.tobytes())
 
 
-def core_game_thread(game):
+def game_event_thread(game):
     '''
     thread to wait for game events, receiving notifications from the signal capture
     class whenever a ping pong sound is detected and passing the detected event
@@ -95,26 +94,38 @@ def core_game_thread(game):
             # wait for the next serve
             event = game.wait_for_game_event(SERVE_TIMEOUT)
         elif game.current_state.state_name == "StartState":
+            # wait for first serve of game or first serve after pausing
             event = game.wait_for_game_event(SERVE_TIMEOUT)
         else:
+            # wait for next in-game event, i.e. a ping-pong related sound
             event = game.wait_for_game_event(GAME_EVENT_TIMEOUT)
+        # transition to next game state based on current state and current event
         game.current_state = game.game_state.transition(game.current_state, event)
 
 
 def game_engine_thread(game):
+    """
+    initialized the game. after players are identified and game state is initialized,
+    start the game event thread while updating the scoreboard and checking for pause/quit events
+    after the game is over, write a message to the user indicating the outcome of the game
+    """
     # do this in thread
     game.identify_players()
+    # set up a gamestate object to keep track of the current game
     game.game_state = GameState(game.p1, game.p2)
     game.scoreboard.message(f"begin game when ready, {game.p1} serves")
     game.scoreboard.root.update()
+    # initialize state
     game.current_state = StartState(game.p1)
 
-    game_thread = threading.Thread(target=core_game_thread, args=(game,))
+    # start game event thread which listens for incoming events
+    game_thread = threading.Thread(target=game_event_thread, args=(game,))
     game_thread.start()
     # while game thread is processing events, the main thread updates the scoreboard
     # and updates the Tkinter root object
     while ((game.current_state.state_name not in ["ErrorState", "EndState"])
            and (game.scoreboard.quit.value != 1)):
+        # update the scoreboard with current score
         p1_score = game.scoreboard.score[0]
         p2_score = game.scoreboard.score[1]
         game.scoreboard.p1_score_var.set(p1_score)
@@ -127,11 +138,14 @@ def game_engine_thread(game):
             game.sig_cap.condition.notify()
             game.sig_cap.condition.release()
             game_thread.join()
+            # wait for game to be un-paused
             while game.scoreboard.pause.value == 1:
                 game.scoreboard.root.update()
+            # after game is un-paused, treat the state is if starting a game,
+            # though the score will remain unchanged from before
             serving = game.scoreboard.serving
             game.current_state = StartState(serving)
-            game_thread = threading.Thread(target=core_game_thread, args=(game,))
+            game_thread = threading.Thread(target=game_event_thread, args=(game,))
             game_thread.start()
 
     # tell the game thread to stop waiting for a game event since quit button
@@ -141,11 +155,13 @@ def game_engine_thread(game):
         game.sig_cap.condition.notify()
         game.sig_cap.condition.release()
         game_thread.join()
+        # return early if game was quit
         return
 
     # wait for event processing thread to finish then handle end game state
     game_thread.join()
 
+    # handle various end-game states by sending relevant messages to the user
     if game.current_state.state_name == "ErrorState":
         err_msg = game.current_state.msg
         game.scoreboard.message(f"something went wrong, error message: {err_msg}")
@@ -173,23 +189,34 @@ def main(fname):
     output_file.setsampwidth(2)
     output_file.setframerate(Fs)
 
+    # set up an input audio stream signal and a signal capture object
+    # the signal capture class is responsible for detecting high-energy audio events
     sig = StreamSignal(frames_per_buffer=5*256)
     sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_ENERGY, MAX_SIG_BUFFER_LEN)
 
+    # initialize the scoreboard - this is the tk interface
     sb = Scoreboard()
+    # start up the actual tk interface
     sb.init_tk(pause, quit_)
+    # initialize a new game object, passing the signal capture object (which sends events to the game)
+    # and the scoreboard object, which is used to interact with the players
     game = Game(sig_cap, sb)
 
+    # start the audio processing thread - this listens to the audio and passed the signal to the signal capture object
     audio_thread = threading.Thread(
         target=audio_thread_func,
         args=(sig, sig_cap, quit_, pause, output_file),
     )
     audio_thread.start()
+    # run the main game loop
     game_engine_thread(game)
+    # after the game has ended, wait for the audio thread and close up any open files
     audio_thread.join()
     sig.close()
     output_file.close()
 
 
 if __name__ == "__main__":
-    main('test2.wav')
+    # update this filename if you want to save the output for testing
+    fname = "game-output.wav"
+    main(fname)
