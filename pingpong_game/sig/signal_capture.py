@@ -1,9 +1,9 @@
 '''
     code implementing the signal capture logic. this code receives incoming audio data from two channels
     for each channel it reads the signal a block at a time according to the window_length passed to the
-    constructor. if the incoming signal on either channel has high enough energy (higher than the
-    energy_thresh argument) that block is added to the current capture. the current capture is built up
-    additively for each block with enough energy. once a block is reach without enough energy the current
+    constructor. if the incoming signal on either channel has high enough power (higher than the
+    power_thresh argument) that block is added to the current capture. the current capture is built up
+    additively for each block with enough power. once a block is reach without enough power the current
     capture is stopped, the whole captured signal is added to the list of captures, a flag is set indicating
     a new capture is ready, and if requested a notification is sent to any waiting semaphores
 '''
@@ -26,13 +26,13 @@ log = logging.getLogger()
 
 
 class SignalCapture:
-    def __init__(self, window_len, energy_thresh, max_capture_len, padding=50, use_lock=True):
+    def __init__(self, window_len, power_thresh, max_capture_len, padding=50, use_lock=True):
         # smallest window length for each block - typically .01 seconds
         self.window_len = int(window_len)
         # max capture length - used as the size of the circular buffer used to record the incoming signal
         self.max_capture_len = max_capture_len
-        # energy threshold that each block must pass in order to be added to the current capture
-        self.energy_thresh = energy_thresh
+        # power threshold that each block must pass in order to be added to the current capture
+        self.power_thresh = power_thresh
         # buffers for each channel
         self.l_sig_buffer = np.zeros(max_capture_len)
         self.r_sig_buffer = np.zeros(max_capture_len)
@@ -51,7 +51,7 @@ class SignalCapture:
         # used to make sure both signals have all the relevant data to determine the delay
         self.padding = padding
         # flag indicating whether the object is currently capturing a signal or not
-        # this will be True as long as incoming blocks continue to have energy higher than energy_thresh
+        # this will be True as long as incoming blocks continue to have power higher than power_thresh
         self.capturing_signal = False
         # flag set whenever a capture is ready to be consumed
         self.capture_ready = False
@@ -103,7 +103,7 @@ class SignalCapture:
 
     def process(self, lsig, rsig, frame_offset=0):
         '''
-        iterates over both incoming signals checking if each block has high enough energy
+        iterates over both incoming signals checking if each block has high enough power
         updates the captures and the currently-capturing state as processing occurs
         '''
         # get input block length from signal
@@ -121,12 +121,12 @@ class SignalCapture:
         self.l_sig_buffer[lb:ub] = lsig.copy()
         self.r_sig_buffer[lb:ub] = rsig.copy()
 
-        # iterate through blocks of size window_len, checking if each block has enough energy
+        # iterate through blocks of size window_len, checking if each block has enough power
         for i in range(int(block_len/self.window_len)):
             block_lb, block_ub = i*self.window_len, (i+1)*self.window_len
             lblock = lsig[block_lb:block_ub]
             rblock = rsig[block_lb:block_ub]
-            # initialize variable to False, it is set to True if signals have low energy
+            # initialize variable to False, it is set to True if signals have low power
             # or if signal length threshold is met (unexpected behavior)
             stop_cap = False
 
@@ -135,7 +135,7 @@ class SignalCapture:
             rrms = get_rms(rblock)
 
             # get the minimum rms allowable
-            min_rms = self.energy_thresh
+            min_rms = self.power_thresh
 
             # if either rms is above the min, we will consider it a valid candidate capture
             if (lrms > min_rms) or (rrms > min_rms):
@@ -212,7 +212,7 @@ class SignalCapture:
         self.w_idx = (self.w_idx + block_len) % self.max_capture_len
 
 
-def preprocess_signal(fname, energy=50, window_len=.01*48_000):
+def preprocess_signal(fname, power=50, window_len=.01*48_000):
     '''
     preprocess a signal loaded from a wave file. this code runs the signal capture processoer
     as if the signal was being processed in real time. it is used for debugging, testing and validation
@@ -230,7 +230,7 @@ def preprocess_signal(fname, energy=50, window_len=.01*48_000):
 
     sig_cap = SignalCapture(
         window_len=window_len,
-        energy_thresh=energy,
+        power_thresh=power,
         max_capture_len=5*Fs,
         use_lock=False,
     )

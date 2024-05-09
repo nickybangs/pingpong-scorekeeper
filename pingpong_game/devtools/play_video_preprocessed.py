@@ -26,7 +26,7 @@ from pingpong_game.sig.signal_tools import get_pingpong_filter, load_signal
 Fs = config["fs"]
 SIG_CAP_WINDOW_LEN = config["sig_cap_window_len"]
 BLOCK_LEN = config["signal_block_len"]
-SIG_CAP_ENERGY = config["sig_cap_energy"]
+SIG_CAP_POWER = config["sig_cap_power"]
 MAX_SIG_BUFFER_LEN = config["max_sig_buffer_len"]
 filter_low_thresh = config["filter_low_thresh"]
 filter_high_thresh = config["filter_high_thresh"]
@@ -215,7 +215,7 @@ def main():
     # the audio syncing with the video
     sig_cap = preprocess_signal(
         audio_fname,
-        SIG_CAP_ENERGY,
+        SIG_CAP_POWER,
         window_len=SIG_CAP_WINDOW_LEN,
     )
     sig_cap.capture_ready = False

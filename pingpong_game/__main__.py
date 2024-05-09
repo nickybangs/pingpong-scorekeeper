@@ -21,7 +21,7 @@ from pingpong_game.sig.signal_tools import StreamSignal, get_pingpong_filter
 Fs = config["fs"]
 SIG_CAP_WINDOW_LEN = config["sig_cap_window_len"]
 BLOCK_LEN = config["signal_block_len"]
-SIG_CAP_ENERGY = config["sig_cap_energy"]
+SIG_CAP_POWER = config["sig_cap_power"]
 MAX_SIG_BUFFER_LEN = config["max_sig_buffer_len"]
 filter_low_thresh = config["filter_low_thresh"]
 filter_high_thresh = config["filter_high_thresh"]
@@ -59,7 +59,7 @@ def audio_thread_func(sig, sig_cap, quit_, pause, output_file):
         [lch, lch_states] = signal.lfilter(b,a,lch,zi=lch_states)
         [rch, rch_states] = signal.lfilter(b,a,rch,zi=rch_states)
 
-        # process segment to check if high energy in signal
+        # process segment to check if high power in signal
         # the signal capture class uses condition.notify to let the game
         # engine know if a ping-pong sound was detected
         sig_cap.condition.acquire()
@@ -190,9 +190,9 @@ def main(fname):
     output_file.setframerate(Fs)
 
     # set up an input audio stream signal and a signal capture object
-    # the signal capture class is responsible for detecting high-energy audio events
+    # the signal capture class is responsible for detecting high-power audio events
     sig = StreamSignal(frames_per_buffer=5*256)
-    sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_ENERGY, MAX_SIG_BUFFER_LEN)
+    sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_POWER, MAX_SIG_BUFFER_LEN)
 
     # initialize the scoreboard - this is the tk interface
     sb = Scoreboard()

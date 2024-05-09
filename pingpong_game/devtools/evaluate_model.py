@@ -28,13 +28,13 @@ wf_temp = wave.open(audio_fname)
 Fs = wf_temp.getframerate()
 wf_temp.close()
 
-energy_thresh = 50
+power_thresh = 50
 
 mic_diameter_inches = 5
 mic_diameter_m = (5/12)*.3048
 delay_max = (mic_diameter_m / 330)*Fs
 
-audio_segments = preprocess_signal(audio_fname, energy_thresh, window_len=.01)
+audio_segments = preprocess_signal(audio_fname, power_thresh, window_len=.01)
 
 with open(cap_fname) as f:
     video_segments = json.load(f)

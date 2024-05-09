@@ -14,7 +14,7 @@ from pingpong_game.sig.signal_tools import (
 
 # config values explained in config.py and at relevant parts of code
 DELAY_MAX = config["delay_max"]
-MEAN_SIGNAL_ENERGY_MIN = config["mean_signal_energy_min"]
+MEAN_SIGNAL_POWER_MIN = config["mean_signal_power_min"]
 
 
 class Game:
@@ -60,13 +60,13 @@ class Game:
                 e = time.time()
 
             # check if captured signal meets criteria for a valid capture. right now this just means
-            # checking if it has high enough mean energy between the channels, but future improvements
+            # checking if it has high enough mean power between the channels, but future improvements
             # could change this to classify the signal as a table/paddle strike vs a floor bounce, etc
             if capture_ready and (self.scoreboard.quit.value != 1) and (self.scoreboard.pause != 1):
                 signal_cap = self.sig_cap.get_next_capture()
                 self.sig_cap.condition.notify() # let producer know the capture has been consumed
                 mean_rms = (get_rms(signal_cap[0])+ get_rms(signal_cap[1]))/2
-                if (mean_rms > MEAN_SIGNAL_ENERGY_MIN):
+                if (mean_rms > MEAN_SIGNAL_POWER_MIN):
                     sound_detected = True
                 else:
                     # print that the capture was rejected (for debugging) and update the timeout

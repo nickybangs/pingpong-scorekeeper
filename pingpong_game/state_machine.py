@@ -77,6 +77,8 @@ class GameState:
         if event_type == "contact_event":
             self.num_consecutive_events += 1
             if self.num_consecutive_events > 2:
+                # reset event counter
+                self.num_consecutive_events = 0
                 return ScoreState(self.other_player)
             else:
                 return GameEventState(event)

@@ -22,7 +22,7 @@ from pingpong_game.sig.signal_tools import (
 Fs = config["fs"]
 SIG_CAP_WINDOW_LEN = config["sig_cap_window_len"]
 BLOCK_LEN = config["signal_block_len"]
-SIG_CAP_ENERGY = config["sig_cap_energy"]
+SIG_CAP_POWER = config["sig_cap_power"]
 MAX_SIG_BUFFER_LEN = config["max_sig_buffer_len"]
 filter_low_thresh = config["filter_low_thresh"]
 filter_high_thresh = config["filter_high_thresh"]
@@ -50,7 +50,7 @@ def audio_thread_func(sig, sig_cap, quit_, pause, output_file):
         [lch, lch_states] = signal.lfilter(b,a,lch,zi=lch_states)
         [rch, rch_states] = signal.lfilter(b,a,rch,zi=rch_states)
 
-        # process segment to check if high energy in signal
+        # process segment to check if high power in signal
         # the signal capture class uses condition.notify to let the game
         # engine know if a ping-pong sound was detected
         sig_cap.condition.acquire()
@@ -65,7 +65,7 @@ def signal_waiter(game):
     '''
     simple function to loop continuously until quit button pressed
     captured signals are printed to the console showing the side the sound came from
-    the estimated angle and the energy of the signal
+    the estimated angle and the power of the signal
     '''
     while (game.scoreboard.quit.value == 0):
         event = game.wait_for_game_event()
@@ -86,7 +86,7 @@ def main():
 
     # set up an incoming stream and signal capture object
     sig = StreamSignal(frames_per_buffer=5*256)
-    sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_ENERGY, MAX_SIG_BUFFER_LEN)
+    sig_cap = SignalCapture(SIG_CAP_WINDOW_LEN, SIG_CAP_POWER, MAX_SIG_BUFFER_LEN)
 
     # set up a scoreboard and game object - these are required for the event waiting logic
     # and the quit function

@@ -17,7 +17,7 @@ def beamformer_time_delay(sig1, sig2, max_delay):
     delay_max = None
     len_ref = len(sig1)
     # iterate over all possible delays between -max delay and +max delay
-    # the estimated delay is that which results in the signal with the highest energy
+    # the estimated delay is that which results in the signal with the highest power
     for delay in range(-max_delay,max_delay+1):
         if delay > 0:
             ref = sig1[:len_ref-delay]

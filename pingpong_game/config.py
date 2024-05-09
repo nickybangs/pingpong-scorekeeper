@@ -7,14 +7,14 @@ Fs = 48_000
 
 config["fs"] = Fs
 # the signal capture window length determines the length of the signal used when determining if a sound had
-# high enough energy to count as an event, i.e. the RMS is found for each window of length .01 seconds, and if
+# high enough power to count as an event, i.e. the RMS is found for each window of length .01 seconds, and if
 # it is high enough it is added to the captured signal
 config["sig_cap_window_len"] = int(.01*Fs)
 # block length for the incoming signal, should be close to the signal capture window length,
 # and should be an integer multiple if it is larger
 config["signal_block_len"] = config["sig_cap_window_len"]*1
-# minimum energy required for each block to be added to a captured signal
-config["sig_cap_energy"] = 50
+# minimum power required for each block to be added to a captured signal
+config["sig_cap_power"] = 50
 # max buffer size for the signal capture, no sonic events should be longer than a second so this gives plenty of buffer
 config["max_sig_buffer_len"] = 5*Fs
 # frequency bounds for the bandpass filter used to limit input signal to just ping-pong sounds
@@ -34,11 +34,11 @@ config["post_scoring_timeout"] = 0
 config["mic_diameter_m"] = (5/12)*.3048
 # max delay in samples based on the distance between the microphones
 config["delay_max"] = int((config["mic_diameter_m"]/340)*Fs)
-# minimum mean energy required for both channels in order to count as a real signal
+# minimum mean power required for both channels in order to count as a real signal
 # this is separated from the signal capture to allow for more control over what captures are kept
 # also this can allow for other means of filtering out captures in the future - e.g. classification on incoming
-# signals instead of using the mean energy between the signals
-config["mean_signal_energy_min"] = 80
+# signals instead of using the mean power between the signals
+config["mean_signal_power_min"] = 80
 # pre-configured sign difference between the two mics. in my case the channels had opposite signs
 # so i need to multiply one of the channels by -1 before processing. this assumption is checked when
 # determing the players position in the calibration stage, and changed if the polarity is estimated to be the same
